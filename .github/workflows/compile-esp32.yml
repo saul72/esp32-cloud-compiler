@@ -1,0 +1,100 @@
+name: Compilar ESP32
+on:
+  workflow_dispatch:
+    inputs:
+      sketch_content:
+        description: 'Código del sketch ESP32'
+        required: true
+        type: string
+      sketch_name:
+        description: 'Nombre del sketch'
+        required: true
+        default: 'sketch_esp32'
+        type: string
+      board:
+        description: 'Tipo de placa ESP32'
+        required: false
+        default: 'esp32dev'
+        type: choice
+        options:
+          - esp32dev
+          - esp32s2
+          - esp32s3
+          - esp32c3
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Setup Arduino CLI
+      uses: arduino/setup-arduino-cli@v1
+      
+    - name: Install ESP32 core
+      run: |
+        arduino-cli core update-index
+        arduino-cli core install esp32:esp32@2.0.11
+        
+    - name: List installed cores
+      run: arduino-cli core list
+      
+    - name: Create sketch
+      run: |
+        mkdir -p sketches/${{ inputs.sketch_name }}
+        echo '${{ inputs.sketch_content }}' > sketches/${{ inputs.sketch_name }}/${{ inputs.sketch_name }}.ino
+        
+    - name: Compile sketch
+      run: |
+        arduino-cli compile \
+          --fqbn esp32:esp32:${{ inputs.board }} \
+          --output-dir build/ \
+          --export-binaries \
+          --warnings all \
+          sketches/${{ inputs.sketch_name }}
+          
+    - name: List build files
+      run: |
+        echo "📁 Archivos generados:"
+        ls -la build/
+        echo ""
+        echo "📊 Información del firmware:"
+        if [ -f "build/${{ inputs.sketch_name }}.ino.bin" ]; then
+          ls -lh build/${{ inputs.sketch_name }}.ino.bin
+          echo "✅ Firmware compilado exitosamente"
+        else
+          echo "❌ Error: No se encontró el archivo .bin"
+          exit 1
+        fi
+        
+    - name: Upload firmware
+      uses: actions/upload-artifact@v4
+      with:
+        name: esp32-firmware-${{ inputs.sketch_name }}
+        path: |
+          build/${{ inputs.sketch_name }}.ino.bin
+          build/${{ inputs.sketch_name }}.ino.elf
+          build/${{ inputs.sketch_name }}.ino.map
+        retention-days: 7
+        
+    - name: Create firmware info
+      run: |
+        echo "{" > firmware_info.json
+        echo "  \"name\": \"${{ inputs.sketch_name }}\"," >> firmware_info.json
+        echo "  \"board\": \"${{ inputs.board }}\"," >> firmware_info.json
+        echo "  \"compiled_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"," >> firmware_info.json
+        echo "  \"file_size\": $(stat -c%s build/${{ inputs.sketch_name }}.ino.bin)," >> firmware_info.json
+        echo "  \"download_url\": \"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"" >> firmware_info.json
+        echo "}" >> firmware_info.json
+        
+        echo "📋 Información del firmware:"
+        cat firmware_info.json
+        
+    - name: Upload firmware info
+      uses: actions/upload-artifact@v4
+      with:
+        name: firmware-info-${{ inputs.sketch_name }}
+        path: firmware_info.json
+        retention-days: 7
